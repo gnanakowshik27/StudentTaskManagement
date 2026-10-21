@@ -1,471 +1,390 @@
 
-"use strict";
+const STORAGE_KEY = "taskflowStudentTasks";
 
-const STORAGE_KEY = "taskflow_student_tasks_v1";
-
-const $ = (id) => document.getElementById(id);
-
-const dialog = $("taskDialog");
-const form = $("taskForm");
-const taskTitle = $("taskTitle");
-const taskDescription = $("taskDescription");
-const taskDue = $("taskDue");
-const taskPriority = $("taskPriority");
-const taskSprint = $("taskSprint");
-const taskStatus = $("taskStatus");
-
-const statusLists = {
-  "To Do": $("todoList"),
-  "In Progress": $("progressList"),
-  "Done": $("doneList")
-};
-
-const statusCounts = {
-  "To Do": $("todoBoardCount"),
-  "In Progress": $("progressBoardCount"),
-  "Done": $("doneBoardCount")
-};
+const taskForm = document.getElementById("taskForm");
+const taskList = document.getElementById("taskList");
+const taskModal = document.getElementById("taskModal");
+const searchInput = document.getElementById("searchInput");
+const statusFilter = document.getElementById("statusFilter");
+const sortFilter = document.getElementById("sortFilter");
+const toast = document.getElementById("toast");
 
 let tasks = loadTasks();
 let editingId = null;
 let toastTimer;
 
-function makeId() {
-  if (window.crypto && typeof window.crypto.randomUUID === "function") {
-    return window.crypto.randomUUID();
-  }
-
-  return Date.now().toString(36) +
-    Math.random().toString(36).slice(2);
-}
-
-function localDateString(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-}
-
 function loadTasks() {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-
-    if (saved === null) {
-      return [
-        {
-          id: makeId(),
-          title: "Complete DBMS assignment",
-          description: "Finish SQL queries and revise the results.",
-          dueDate: localDateString(
-            new Date(Date.now() + 2 * 86400000)
-          ),
-          priority: "High",
-          sprint: "Sprint 1",
-          status: "To Do"
-        },
-        {
-          id: makeId(),
-          title: "Revise DAA concepts",
-          description: "Study algorithms and solve practice questions.",
-          dueDate: localDateString(
-            new Date(Date.now() + 4 * 86400000)
-          ),
-          priority: "Medium",
-          sprint: "Sprint 1",
-          status: "In Progress"
-        },
-        {
-          id: makeId(),
-          title: "Organize project folder",
-          description: "Keep project files ready for the next review.",
-          dueDate: localDateString(),
-          priority: "Low",
-          sprint: "Sprint 1",
-          status: "Done"
-        }
-      ];
+    try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+        return Array.isArray(saved) ? saved : [];
+    } catch {
+        return [];
     }
-
-    const parsed = JSON.parse(saved);
-
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    const validPriorities = ["Low", "Medium", "High"];
-    const validStatuses = ["To Do", "In Progress", "Done"];
-    const validSprints = ["Sprint 1", "Sprint 2", "Sprint 3"];
-
-    return parsed.filter((task) =>
-      task &&
-      typeof task.id === "string" &&
-      typeof task.title === "string" &&
-      typeof task.description === "string" &&
-      typeof task.dueDate === "string" &&
-      validPriorities.includes(task.priority) &&
-      validStatuses.includes(task.status) &&
-      validSprints.includes(task.sprint)
-    );
-  } catch (error) {
-    console.error("Could not load saved tasks:", error);
-    return [];
-  }
 }
 
 function saveTasks() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
-    return true;
-  } catch (error) {
-    console.error("Could not save tasks:", error);
-    showToast("Could not save. Check your browser storage settings.");
-    return false;
-  }
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+        return true;
+    } catch {
+        showToast("Unable to save. Browser storage may be full.");
+        return false;
+    }
 }
 
 function showToast(message) {
-  const toast = $("toast");
-  toast.textContent = message;
-  toast.classList.add("show");
+    toast.textContent = message;
+    toast.classList.add("show");
 
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    toast.classList.remove("show");
-  }, 2600);
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+        toast.classList.remove("show");
+    }, 2600);
 }
 
-function createElement(tag, className, text) {
-  const element = document.createElement(tag);
-
-  if (className) {
-    element.className = className;
-  }
-
-  if (text !== undefined) {
-    element.textContent = text;
-  }
-
-  return element;
+function escapeHTML(value) {
+    return String(value ?? "").replace(/[&<>"']/g, char => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+    })[char]);
 }
 
-function addPill(parent, text, className = "") {
-  const pill = createElement("span", `pill ${className}`.trim(), text);
-  parent.appendChild(pill);
+function isOverdue(task) {
+    return task.status !== "Done" &&
+        task.deadline &&
+        task.deadline < localDateString();
+}
+
+function localDateString() {
+    const date = new Date();
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
 }
 
 function formatDate(dateString) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
-    return dateString || "No deadline";
-  }
+    if (!dateString) return "No deadline";
 
-  const [year, month, day] = dateString.split("-").map(Number);
-  const date = new Date(year, month - 1, day);
+    const parts = dateString.split("-").map(Number);
+    const date = new Date(parts[0], parts[1] - 1, parts[2]);
 
-  return date.toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric"
-  });
-}
-
-function makeActionButton(label, action, taskId, extraClass = "") {
-  const button = createElement(
-    "button",
-    extraClass,
-    label
-  );
-
-  button.type = "button";
-  button.dataset.action = action;
-  button.dataset.id = taskId;
-
-  return button;
-}
-
-function renderTask(task) {
-  const card = createElement("article", "task-card");
-
-  const heading = createElement("h4", "", task.title);
-  card.appendChild(heading);
-
-  if (task.description) {
-    card.appendChild(
-      createElement("p", "task-description", task.description)
-    );
-  }
-
-  const meta = createElement("div", "task-meta");
-
-  const priorityClass = {
-    High: "priority-high",
-    Medium: "priority-medium",
-    Low: "priority-low"
-  }[task.priority];
-
-  addPill(meta, task.priority + " priority", priorityClass);
-  addPill(meta, task.sprint);
-
-  card.appendChild(meta);
-
-  const overdue =
-    task.status !== "Done" &&
-    task.dueDate < localDateString();
-
-  const due = createElement(
-    "div",
-    overdue ? "due-date overdue" : "due-date",
-    (overdue ? "Overdue · " : "Due · ") + formatDate(task.dueDate)
-  );
-
-  card.appendChild(due);
-
-  const actions = createElement("div", "task-actions");
-
-  actions.appendChild(
-    makeActionButton("Edit", "edit", task.id)
-  );
-
-  if (task.status === "To Do") {
-    actions.appendChild(
-      makeActionButton("Start", "start", task.id)
-    );
-  } else if (task.status === "In Progress") {
-    actions.appendChild(
-      makeActionButton("Complete", "complete", task.id)
-    );
-  } else {
-    actions.appendChild(
-      makeActionButton("Reopen", "reopen", task.id)
-    );
-  }
-
-  actions.appendChild(
-    makeActionButton("Delete", "delete", task.id, "delete-btn")
-  );
-
-  card.appendChild(actions);
-
-  return card;
-}
-
-function render() {
-  const sprint = $("sprintFilter").value;
-  const status = $("statusFilter").value;
-  const search = $("searchInput").value.trim().toLowerCase();
-
-  const total = tasks.length;
-  const todo = tasks.filter((task) => task.status === "To Do").length;
-  const inProgress = tasks.filter(
-    (task) => task.status === "In Progress"
-  ).length;
-  const done = tasks.filter((task) => task.status === "Done").length;
-
-  $("totalCount").textContent = total;
-  $("todoCount").textContent = todo;
-  $("progressCount").textContent = inProgress;
-  $("doneCount").textContent = done;
-
-  const percent = total === 0 ? 0 : Math.round((done / total) * 100);
-
-  $("progressPercent").textContent = percent + "%";
-  $("progressBar").style.width = percent + "%";
-
-  Object.values(statusLists).forEach((list) => {
-    list.replaceChildren();
-  });
-
-  Object.values(statusCounts).forEach((count) => {
-    count.textContent = "0";
-  });
-
-  const filtered = tasks.filter((task) => {
-    const matchesSprint = sprint === "all" || task.sprint === sprint;
-    const matchesStatus = status === "all" || task.status === status;
-
-    const searchableText =
-      `${task.title} ${task.description} ${task.sprint}`.toLowerCase();
-
-    return matchesSprint &&
-      matchesStatus &&
-      searchableText.includes(search);
-  });
-
-  for (const task of filtered) {
-    statusLists[task.status].appendChild(renderTask(task));
-    statusCounts[task.status].textContent =
-      Number(statusCounts[task.status].textContent) + 1;
-  }
-
-  for (const [taskStatus, list] of Object.entries(statusLists)) {
-    if (list.children.length === 0) {
-      const empty = createElement(
-        "div",
-        "empty-state",
-        "No tasks to show"
-      );
-      list.appendChild(empty);
-    }
-  }
-}
-
-function openNewTaskDialog() {
-  editingId = null;
-  form.reset();
-
-  $("dialogTitle").textContent = "Add a task";
-  taskDue.value = localDateString();
-  taskPriority.value = "Medium";
-  taskSprint.value = $("sprintFilter").value === "all"
-    ? "Sprint 1"
-    : $("sprintFilter").value;
-  taskStatus.value = "To Do";
-
-  dialog.showModal();
-  taskTitle.focus();
-}
-
-function openEditTaskDialog(id) {
-  const task = tasks.find((item) => item.id === id);
-
-  if (!task) {
-    showToast("Task not found.");
-    return;
-  }
-
-  editingId = id;
-  $("dialogTitle").textContent = "Edit task";
-
-  taskTitle.value = task.title;
-  taskDescription.value = task.description;
-  taskDue.value = task.dueDate;
-  taskPriority.value = task.priority;
-  taskSprint.value = task.sprint;
-  taskStatus.value = task.status;
-
-  dialog.showModal();
-  taskTitle.focus();
-}
-
-function handleSubmit(event) {
-  event.preventDefault();
-
-  const title = taskTitle.value.trim();
-  const description = taskDescription.value.trim();
-  const dueDate = taskDue.value;
-
-  if (!title || !dueDate) {
-    showToast("Please enter a title and deadline.");
-    return;
-  }
-
-  const taskData = {
-    title,
-    description,
-    dueDate,
-    priority: taskPriority.value,
-    sprint: taskSprint.value,
-    status: taskStatus.value
-  };
-
-  if (editingId) {
-    const index = tasks.findIndex((task) => task.id === editingId);
-
-    if (index === -1) {
-      showToast("Task not found.");
-      return;
-    }
-
-    tasks[index] = { ...tasks[index], ...taskData };
-  } else {
-    tasks.push({
-      id: makeId(),
-      ...taskData
+    return date.toLocaleDateString("en-IN", {
+        day: "numeric",
+        month: "short",
+        year: "numeric"
     });
-  }
-
-  if (!saveTasks()) {
-    return;
-  }
-
-  dialog.close();
-  render();
-  showToast(editingId ? "Task updated!" : "Task added!");
-
-  editingId = null;
 }
 
-function handleTaskAction(event) {
-  const button = event.target.closest("button[data-action]");
+function updateDashboard() {
+    const total = tasks.length;
+    const completed = tasks.filter(t => t.status === "Done").length;
+    const progress = tasks.filter(t => t.status === "In Progress").length;
+    const overdue = tasks.filter(isOverdue).length;
+    const percent = total ? Math.round(completed / total * 100) : 0;
 
-  if (!button) {
-    return;
-  }
+    document.getElementById("totalTasks").textContent = total;
+    document.getElementById("progressTasks").textContent = progress;
+    document.getElementById("completedTasks").textContent = completed;
+    document.getElementById("overdueTasks").textContent = overdue;
+    document.getElementById("progressPercent").textContent = percent + "%";
+    document.getElementById("progressBar").style.width = percent + "%";
+    document.getElementById("taskCount").textContent = total;
 
-  const id = button.dataset.id;
-  const action = button.dataset.action;
-  const task = tasks.find((item) => item.id === id);
+    const caption = total === 0
+        ? "Add your first task to get started."
+        : completed === total
+            ? "Amazing! Every task is complete."
+            : `${completed} of ${total} tasks completed. Keep going!`;
 
-  if (!task) {
-    showToast("Task not found.");
-    return;
-  }
-
-  if (action === "edit") {
-    openEditTaskDialog(id);
-    return;
-  }
-
-  if (action === "delete") {
-    if (!window.confirm(`Delete "${task.title}"?`)) {
-      return;
-    }
-
-    tasks = tasks.filter((item) => item.id !== id);
-
-    if (!saveTasks()) {
-      tasks.push(task);
-      return;
-    }
-
-    render();
-    showToast("Task deleted.");
-    return;
-  }
-
-  const nextStatus = {
-    start: "In Progress",
-    complete: "Done",
-    reopen: "To Do"
-  }[action];
-
-  if (!nextStatus) {
-    return;
-  }
-
-  const previousStatus = task.status;
-  task.status = nextStatus;
-
-  if (!saveTasks()) {
-    task.status = previousStatus;
-    return;
-  }
-
-  render();
-  showToast("Task moved to " + nextStatus + ".");
+    document.getElementById("progressCaption").textContent = caption;
 }
 
-$("addTaskTop").addEventListener("click", openNewTaskDialog);
-$("taskForm").addEventListener("submit", handleSubmit);
-$("closeDialog").addEventListener("click", () => dialog.close());
-$("cancelDialog").addEventListener("click", () => dialog.close());
+function getVisibleTasks() {
+    const query = searchInput.value.trim().toLowerCase();
+    const selectedStatus = statusFilter.value;
 
-$("sprintFilter").addEventListener("change", render);
-$("statusFilter").addEventListener("change", render);
-$("searchInput").addEventListener("input", render);
+    let result = tasks.filter(task => {
+        const matchesStatus =
+            selectedStatus === "All" || task.status === selectedStatus;
 
-Object.values(statusLists).forEach((list) => {
-  list.addEventListener("click", handleTaskAction);
+        const searchableText = [
+            task.name,
+            task.description,
+            task.priority,
+            task.sprint,
+            task.status
+        ].join(" ").toLowerCase();
+
+        return matchesStatus && searchableText.includes(query);
+    });
+
+    if (sortFilter.value === "priority") {
+        const rank = { High: 0, Medium: 1, Low: 2 };
+        result.sort((a, b) =>
+            (rank[a.priority] ?? 3) - (rank[b.priority] ?? 3)
+        );
+    } else if (sortFilter.value === "newest") {
+        result.sort((a, b) => b.id - a.id);
+    } else {
+        result.sort((a, b) =>
+            (a.deadline || "9999-12-31")
+                .localeCompare(b.deadline || "9999-12-31")
+        );
+    }
+
+    return result;
+}
+
+function renderTasks() {
+    const visibleTasks = getVisibleTasks();
+
+    if (visibleTasks.length === 0) {
+        const hasTasks = tasks.length > 0;
+
+        taskList.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-icon">✧</div>
+                <h3>${hasTasks ? "No matching tasks" : "A fresh start."}</h3>
+                <p>${hasTasks
+                    ? "Try changing your search or filters."
+                    : "Create your first task and turn your plans into progress."}</p>
+            </div>
+        `;
+
+        updateDashboard();
+        return;
+    }
+
+    taskList.innerHTML = visibleTasks.map(task => {
+        const statusClass = {
+            "To Do": "status-todo",
+            "In Progress": "status-progress",
+            "Done": "status-done"
+        }[task.status] || "status-todo";
+
+        const priorityClass = {
+            High: "priority-high",
+            Medium: "priority-medium",
+            Low: "priority-low"
+        }[task.priority] || "priority-medium";
+
+        const deadlineLabel = isOverdue(task)
+            ? "⚠ Overdue · " + formatDate(task.deadline)
+            : "◷ " + formatDate(task.deadline);
+
+        const description = task.description
+            ? escapeHTML(task.description)
+            : "No description added.";
+
+        const nextStatus = {
+            "To Do": "In Progress",
+            "In Progress": "Done",
+            "Done": "To Do"
+        }[task.status];
+
+        return `
+            <article class="task-card ${task.status === "Done" ? "completed" : ""}">
+                <div class="task-card-top">
+                    <h3 class="task-title">${escapeHTML(task.name)}</h3>
+                    <span class="badge ${priorityClass}">
+                        ${escapeHTML(task.priority)}
+                    </span>
+                </div>
+
+                <p class="task-description">${description}</p>
+
+                <div class="task-meta">
+                    <span class="badge ${statusClass}">
+                        ${escapeHTML(task.status)}
+                    </span>
+                    <span>${deadlineLabel}</span>
+                </div>
+
+                <div class="task-meta">
+                    <span>▦ ${escapeHTML(task.sprint || "Backlog")}</span>
+                </div>
+
+                <div class="task-actions">
+                    <button class="action-btn" data-action="status"
+                        data-id="${task.id}">
+                        → ${escapeHTML(nextStatus)}
+                    </button>
+                    <button class="action-btn" data-action="edit"
+                        data-id="${task.id}">✎ Edit</button>
+                    <button class="action-btn delete" data-action="delete"
+                        data-id="${task.id}">× Delete</button>
+                </div>
+            </article>
+        `;
+    }).join("");
+
+    updateDashboard();
+}
+
+function openModal(task = null) {
+    taskForm.reset();
+    editingId = task ? task.id : null;
+
+    document.getElementById("modalTitle").textContent =
+        task ? "Edit your task" : "Create a task";
+
+    document.getElementById("saveBtn").textContent =
+        task ? "Save Changes →" : "Save Task →";
+
+    document.getElementById("taskName").value = task?.name || "";
+    document.getElementById("taskDescription").value =
+        task?.description || "";
+    document.getElementById("deadline").value = task?.deadline || "";
+    document.getElementById("priority").value = task?.priority || "Medium";
+    document.getElementById("taskStatus").value = task?.status || "To Do";
+    document.getElementById("sprint").value = task?.sprint || "Sprint 1";
+
+    taskModal.classList.remove("hidden");
+    document.body.style.overflow = "hidden";
+    document.getElementById("taskName").focus();
+}
+
+function closeModal() {
+    taskModal.classList.add("hidden");
+    document.body.style.overflow = "";
+    editingId = null;
+}
+
+document.getElementById("openFormBtn").addEventListener("click", () => {
+    openModal();
 });
 
-render();
+document.getElementById("closeModalBtn").addEventListener("click", closeModal);
+document.getElementById("cancelBtn").addEventListener("click", closeModal);
+document.getElementById("modalBackdrop").addEventListener("click", closeModal);
+
+document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && !taskModal.classList.contains("hidden")) {
+        closeModal();
+    }
+});
+
+taskForm.addEventListener("submit", event => {
+    event.preventDefault();
+
+    const name = document.getElementById("taskName").value.trim();
+
+    if (!name) {
+        showToast("Please enter a task name.");
+        return;
+    }
+
+    const taskData = {
+        name,
+        description: document.getElementById("taskDescription").value.trim(),
+        deadline: document.getElementById("deadline").value,
+        priority: document.getElementById("priority").value,
+        status: document.getElementById("taskStatus").value,
+        sprint: document.getElementById("sprint").value
+    };
+
+    if (!taskData.deadline) {
+        showToast("Please select a deadline.");
+        return;
+    }
+
+    if (editingId !== null) {
+        const index = tasks.findIndex(task => task.id === editingId);
+
+        if (index !== -1) {
+            tasks[index] = { ...tasks[index], ...taskData };
+        }
+    } else {
+        tasks.push({
+            id: Date.now(),
+            ...taskData
+        });
+    }
+
+    if (!saveTasks()) return;
+
+    closeModal();
+    renderTasks();
+    showToast(editingId === null ? "Task created successfully!" : "Task updated!");
+});
+
+taskList.addEventListener("click", event => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+
+    const id = Number(button.dataset.id);
+    const action = button.dataset.action;
+    const task = tasks.find(item => item.id === id);
+
+    if (!task) return;
+
+    if (action === "edit") {
+        openModal(task);
+        return;
+    }
+
+    if (action === "status") {
+        const previousStatus = task.status;
+
+        task.status = {
+            "To Do": "In Progress",
+            "In Progress": "Done",
+            "Done": "To Do"
+        }[task.status] || "To Do";
+
+        if (!saveTasks()) {
+            task.status = previousStatus;
+            return;
+        }
+
+        renderTasks();
+        showToast("Status changed to " + task.status + ".");
+        return;
+    }
+
+    if (action === "delete") {
+        if (!confirm(`Delete "${task.name}"?`)) return;
+
+        const previousTasks = tasks;
+        tasks = tasks.filter(item => item.id !== id);
+
+        if (!saveTasks()) {
+            tasks = previousTasks;
+            return;
+        }
+
+        renderTasks();
+        showToast("Task deleted.");
+    }
+});
+
+searchInput.addEventListener("input", renderTasks);
+statusFilter.addEventListener("change", renderTasks);
+sortFilter.addEventListener("change", renderTasks);
+
+document.querySelectorAll(".nav-item").forEach(button => {
+    button.addEventListener("click", () => {
+        document.querySelectorAll(".nav-item").forEach(item => {
+            item.classList.remove("active");
+        });
+
+        button.classList.add("active");
+        statusFilter.value = button.dataset.filter;
+        renderTasks();
+    });
+});
+
+document.getElementById("todayDate").textContent =
+    new Date().toLocaleDateString("en-IN", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        year: "numeric"
+    });
+
+renderTasks();
